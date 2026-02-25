@@ -1,4 +1,4 @@
-name: A2 lockfile
+name: A2 from ZIP (lock + build)
 
 on:
   workflow_dispatch:
@@ -53,4 +53,3 @@ jobs:
         with:
           name: a2_lockfile
           path: extracted/**/frontend/package-lock.json
-``
