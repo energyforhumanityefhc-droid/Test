@@ -43,14 +43,20 @@ jobs:
           test -n "$FRONTEND_DIR"
           echo "frontend_dir=$FRONTEND_DIR" >> "$GITHUB_OUTPUT"
 
-      - name: Patch DepositModal.tsx TS (items) via python -c
+      - name: Patch DepositModal.tsx TS (items + tonconnect_tx) via python -c
         run: |
           FILE="${{ steps.pick_frontend.outputs.frontend_dir }}/src/components/DepositModal.tsx"
           test -f "$FILE"
-          python -c "from pathlib import Path; p=Path('$FILE'); s=p.read_text(encoding='utf-8'); old='const items = (r?.items || []) as SalePackage[];'; new='const rr = r as unknown as { items?: SalePackage[] };\\n    const items = rr.items ?? [];'; \
-          (_ for _ in ()).throw(SystemExit('Expected line not found')) if old not in s else None; \
-          p.write_text(s.replace(old,new,1), encoding='utf-8'); print('Patched OK')" 
-          grep -n "const rr = r as unknown as" "$FILE" || true
+
+          python -c "from pathlib import Path; p=Path('$FILE'); s=p.read_text(encoding='utf-8'); \
+          # 1) items fix \
+          s=s.replace('const items = (r?.items || []) as SalePackage[];', 'const rr_items = r as unknown as { items?: SalePackage[] };\\n    const items = rr_items.items ?? [];', 1); \
+          # 2) tonconnect_tx fix (make response access safe) \
+          s=s.replace(\"const tx = (r?.tonconnect_tx || null) as TonConnectTx | null;\", \"const rr_tx = r as unknown as { tonconnect_tx?: TonConnectTx | null };\\n    const tx = rr_tx.tonconnect_tx ?? null;\", 1); \
+          p.write_text(s, encoding='utf-8'); print('Patched OK')" 
+
+          echo "=== patched preview ==="
+          grep -n "rr_items\\|rr_tx\\|tonconnect_tx" "$FILE" | head -n 50 || true
 
       - name: Generate lockfile + install + build
         run: |
