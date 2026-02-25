@@ -1,0 +1,53 @@
+name: FRONTEND BUILD ONLY (npm run build)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Unzip project.zip
+        run: |
+          rm -rf extracted
+          mkdir -p extracted
+          unzip -q project.zip -d extracted
+
+      - name: Remove any .npmrc inside extracted
+        run: |
+          find extracted -maxdepth 12 -name ".npmrc" -print -delete || true
+
+      - name: Force public npm registry
+        run: |
+          npm config set registry https://registry.npmjs.org/
+          npm config delete always-auth || true
+          npm config get registry
+
+      - name: Pick real frontend dir
+        id: pick_frontend
+        run: |
+          FRONTEND_DIR=""
+          while IFS= read -r d; do
+            if [ -f "$d/package.json" ] && node -e "const p=require('./$d/package.json'); process.exit(p.scripts && p.scripts.build ? 0 : 1)"; then
+              FRONTEND_DIR="$d"
+              break
+            fi
+          done < <(find extracted -maxdepth 12 -type d -name frontend | sort)
+          test -n "$FRONTEND_DIR"
+          echo "frontend_dir=$FRONTEND_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: npm ci
+        run: |
+          cd "${{ steps.pick_frontend.outputs.frontend_dir }}"
+          npm ci
+
+      - name: npm run build
+        run: |
+          cd "${{ steps.pick_frontend.outputs.frontend_dir }}"
+          npm run build
