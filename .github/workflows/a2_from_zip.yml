@@ -45,21 +45,32 @@ jobs:
           test -n "$FRONTEND_DIR"
           echo "frontend_dir=$FRONTEND_DIR" >> "$GITHUB_OUTPUT"
 
-      - name: Patch DepositModal.tsx TS (items)
+      - name: Patch DepositModal.tsx TS (items) via Python
         run: |
           FRONTEND_DIR="${{ steps.pick_frontend.outputs.frontend_dir }}"
           FILE="$FRONTEND_DIR/src/components/DepositModal.tsx"
           echo "PATCH_FILE=$FILE"
           test -f "$FILE"
-          # Replace the single-line items access with a safe cast (no any)
-          # const items = (r?.items || []) as SalePackage[];
-          # -> const rr = r as unknown as { items?: SalePackage[] };
-          #    const items = rr.items ?? [];
-          sed -i \
-            -e 's|const items = (r\?\.items || \[\]) as SalePackage\[\];|const rr = r as unknown as { items?: SalePackage[] };\n    const items = rr.items ?? [];|g' \
-            "$FILE"
+
+          python - <<'PY'
+from pathlib import Path
+
+path = Path("${FILE}")
+s = path.read_text(encoding="utf-8")
+
+old = "const items = (r?.items || []) as SalePackage[];"
+new = "const rr = r as unknown as { items?: SalePackage[] };\n    const items = rr.items ?? [];"
+
+if old not in s:
+    raise SystemExit(f"Expected line not found in {path}")
+
+s2 = s.replace(old, new, 1)
+path.write_text(s2, encoding="utf-8")
+print("Patched OK")
+PY
+
           echo "=== patched preview ==="
-          grep -n "const rr = r as unknown as" -n "$FILE" || true
+          grep -n "const rr = r as unknown as" "$FILE" || true
 
       - name: Generate lockfile + install + build
         run: |
