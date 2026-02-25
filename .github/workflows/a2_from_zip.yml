@@ -1,0 +1,43 @@
+name: A2 from ZIP (lock + build)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Unzip project
+        run: |
+          ls -la
+          unzip -q project.zip -d extracted
+          ls -la extracted
+
+      - name: Configure npm auth + force public registry
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+          npm config set registry https://registry.npmjs.org/
+          npm config delete always-auth || true
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Recreate lockfile + install + build
+        working-directory: extracted/frontend
+        run: |
+          rm -f package-lock.json
+          rm -rf node_modules
+          npm install @tonconnect/ui-react@2.4.0 --save-exact
+          npm ci
+          npm run build
+
+      - name: Upload lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: a2_lockfile
+          path: extracted/frontend/package-lock.json
