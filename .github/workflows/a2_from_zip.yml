@@ -9,9 +9,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: List repo files
-        run: ls -la
-
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -21,8 +18,6 @@ jobs:
           rm -rf extracted
           mkdir -p extracted
           unzip -q project.zip -d extracted
-          echo "=== extracted top ==="
-          ls -la extracted
           echo "=== candidate frontend dirs ==="
           find extracted -maxdepth 12 -type d -name frontend -print
 
@@ -49,6 +44,22 @@ jobs:
           echo "FRONTEND_DIR=$FRONTEND_DIR"
           test -n "$FRONTEND_DIR"
           echo "frontend_dir=$FRONTEND_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Patch DepositModal.tsx TS (items)
+        run: |
+          FRONTEND_DIR="${{ steps.pick_frontend.outputs.frontend_dir }}"
+          FILE="$FRONTEND_DIR/src/components/DepositModal.tsx"
+          echo "PATCH_FILE=$FILE"
+          test -f "$FILE"
+          # Replace the single-line items access with a safe cast (no any)
+          # const items = (r?.items || []) as SalePackage[];
+          # -> const rr = r as unknown as { items?: SalePackage[] };
+          #    const items = rr.items ?? [];
+          sed -i \
+            -e 's|const items = (r\?\.items || \[\]) as SalePackage\[\];|const rr = r as unknown as { items?: SalePackage[] };\n    const items = rr.items ?? [];|g' \
+            "$FILE"
+          echo "=== patched preview ==="
+          grep -n "const rr = r as unknown as" -n "$FILE" || true
 
       - name: Generate lockfile + install + build
         run: |
