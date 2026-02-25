@@ -32,6 +32,7 @@ jobs:
           done < <(find extracted -maxdepth 12 -type d -name frontend | sort)
           test -n "$FRONTEND_DIR"
           echo "frontend_dir=$FRONTEND_DIR" >> "$GITHUB_OUTPUT"
+          echo "FRONTEND_DIR=$FRONTEND_DIR"
 
       - uses: actions/setup-node@v4
         with:
@@ -45,10 +46,12 @@ jobs:
           npm config delete always-auth || true
           npm config get registry
 
-      - name: npm ci
+      - name: npm ci (verbose)
+        env:
+          NPM_CONFIG_LOGLEVEL: verbose
         run: |
           cd "${{ steps.pick_frontend.outputs.frontend_dir }}"
-          npm ci
+          npm ci --foreground-scripts
 
       - name: npm run build
         run: |
