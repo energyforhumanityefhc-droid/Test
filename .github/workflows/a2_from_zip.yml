@@ -23,7 +23,7 @@ jobs:
           unzip -q project.zip -d extracted
           echo "=== extracted top ==="
           ls -la extracted
-          echo "=== find frontend dirs ==="
+          echo "=== candidate frontend dirs ==="
           find extracted -maxdepth 12 -type d -name frontend -print
 
       - name: Remove any .npmrc inside extracted
@@ -36,11 +36,9 @@ jobs:
           npm config delete always-auth || true
           npm config get registry
 
-      - name: Generate lockfile + build (pick real frontend)
+      - name: Pick real frontend dir (must have scripts.build)
+        id: pick_frontend
         run: |
-          echo "=== Candidate frontend dirs ==="
-          find extracted -maxdepth 12 -type d -name frontend -print
-
           FRONTEND_DIR=""
           while IFS= read -r d; do
             if [ -f "$d/package.json" ] && node -e "const p=require('./$d/package.json'); process.exit(p.scripts && p.scripts.build ? 0 : 1)"; then
@@ -48,11 +46,13 @@ jobs:
               break
             fi
           done < <(find extracted -maxdepth 12 -type d -name frontend | sort)
-
           echo "FRONTEND_DIR=$FRONTEND_DIR"
           test -n "$FRONTEND_DIR"
+          echo "frontend_dir=$FRONTEND_DIR" >> "$GITHUB_OUTPUT"
 
-          cd "$FRONTEND_DIR"
+      - name: Generate lockfile + install + build
+        run: |
+          cd "${{ steps.pick_frontend.outputs.frontend_dir }}"
           rm -f package-lock.json
           rm -rf node_modules
           npm install @tonconnect/ui-react@2.4.0 --save-exact
@@ -63,4 +63,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: a2_lockfile
-          path: extracted/**/frontend/package-lock.json
+          path: ${{ steps.pick_frontend.outputs.frontend_dir }}/package-lock.json
