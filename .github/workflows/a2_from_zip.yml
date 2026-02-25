@@ -16,7 +16,7 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Unzip project
+      - name: Unzip project.zip
         run: |
           rm -rf extracted
           mkdir -p extracted
@@ -43,7 +43,7 @@ jobs:
 
           FRONTEND_DIR=""
           while IFS= read -r d; do
-            if [ -f "$d/package.json" ] && node -e "const p=require('./$d/package.json'); process.exit(p.scripts&&p.scripts.build?0:1)"; then
+            if [ -f "$d/package.json" ] && node -e "const p=require('./$d/package.json'); process.exit(p.scripts && p.scripts.build ? 0 : 1)"; then
               FRONTEND_DIR="$d"
               break
             fi
