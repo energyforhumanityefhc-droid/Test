@@ -1,83 +1,37 @@
-name: A2 from ZIP (lock + build)
+name: UNZIP ONLY (project.zip)
 
 on:
   workflow_dispatch:
 
 jobs:
-  build:
+  unzip:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
+      - name: List repo files
+        run: |
+          ls -la
 
       - name: Unzip project.zip
         run: |
           rm -rf extracted
           mkdir -p extracted
           unzip -q project.zip -d extracted
-          find extracted -maxdepth 12 -type d -name frontend -print
+          echo "=== OK: unzip completed ==="
+          echo "=== extracted top level ==="
+          ls -la extracted
+          echo "=== first 200 paths ==="
+          find extracted -maxdepth 6 -print | head -n 200
 
-      - name: Remove any .npmrc inside extracted
+      - name: Pack extracted to artifact zip
         run: |
-          find extracted -maxdepth 12 -name ".npmrc" -print -delete || true
+          cd extracted
+          zip -qr ../extracted.zip .
+          cd ..
 
-      - name: Force public npm registry
-        run: |
-          npm config set registry https://registry.npmjs.org/
-          npm config delete always-auth || true
-          npm config get registry
-
-      - name: Pick real frontend dir (must have scripts.build)
-        id: pick_frontend
-        run: |
-          FRONTEND_DIR=""
-          while IFS= read -r d; do
-            if [ -f "$d/package.json" ] && node -e "const p=require('./$d/package.json'); process.exit(p.scripts && p.scripts.build ? 0 : 1)"; then
-              FRONTEND_DIR="$d"
-              break
-            fi
-          done < <(find extracted -maxdepth 12 -type d -name frontend | sort)
-          test -n "$FRONTEND_DIR"
-          echo "frontend_dir=$FRONTEND_DIR" >> "$GITHUB_OUTPUT"
-
-      - name: Patch DepositModal.tsx TS (items + tonconnect_tx) via python regex
-        run: |
-          FILE="${{ steps.pick_frontend.outputs.frontend_dir }}/src/components/DepositModal.tsx"
-          test -f "$FILE"
-
-          python -c "import re; from pathlib import Path; p=Path('$FILE'); s=p.read_text(encoding='utf-8'); \
-          # Patch 1: replace ANY 'const items = (r?.items ... ) as SalePackage[];' variant \
-          pat_items=re.compile(r\"^\\s*const\\s+items\\s*=\\s*\\(r\\?\\.items\\s*\\|\\|\\s*\\[\\]\\)\\s*as\\s*SalePackage\\[\\]\\s*;\\s*$\", re.M); \
-          repl_items=\"    const rr_items = r as unknown as { items?: SalePackage[] };\\n    const items = rr_items.items ?? [];\"; \
-          s2, n1 = pat_items.subn(repl_items, s, count=1); \
-          # If pattern didn't match (format differs), do a broader patch: replace 'r?.items' access in that line \
-          if n1==0: \
-            s2 = re.sub(r\"(const\\s+items\\s*=\\s*)\\(r\\?\\.items\\s*\\|\\|\\s*\\[\\]\\)(\\s*as\\s*SalePackage\\[\\]\\s*;)\", \
-                        r\"const rr_items = r as unknown as { items?: SalePackage[] };\\n    const items = rr_items.items ?? [];\",
-                        s2, count=1); \
-          # Patch 2: tonconnect_tx line \
-          s3 = re.sub(r\"^\\s*const\\s+tx\\s*=\\s*\\(r\\?\\.tonconnect_tx\\s*\\|\\|\\s*null\\)\\s*as\\s*TonConnectTx\\s*\\|\\s*null\\s*;\\s*$\", \
-                      \"    const rr_tx = r as unknown as { tonconnect_tx?: TonConnectTx | null };\\n    const tx = rr_tx.tonconnect_tx ?? null;\", \
-                      s2, flags=re.M, count=1); \
-          p.write_text(s3, encoding='utf-8'); print('Patched OK')" 
-
-          echo "=== patched preview ==="
-          grep -n "rr_items\\|rr_tx\\|tonconnect_tx" "$FILE" | head -n 80 || true
-
-      - name: Generate lockfile + install + build
-        run: |
-          cd "${{ steps.pick_frontend.outputs.frontend_dir }}"
-          rm -f package-lock.json
-          rm -rf node_modules
-          npm install @tonconnect/ui-react@2.4.0 --save-exact
-          npm ci
-          npm run build
-
-      - name: Upload lockfile
+      - name: Upload extracted artifact
         uses: actions/upload-artifact@v4
         with:
-          name: a2_lockfile
-          path: ${{ steps.pick_frontend.outputs.frontend_dir }}/package-lock.json
+          name: extracted_zip
+          path: extracted.zip
