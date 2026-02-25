@@ -36,11 +36,22 @@ jobs:
           npm config delete always-auth || true
           npm config get registry
 
-      - name: Generate lockfile + build
+      - name: Generate lockfile + build (pick real frontend)
         run: |
-          FRONTEND_DIR="$(find extracted -maxdepth 12 -type d -name frontend | head -n 1)"
+          echo "=== Candidate frontend dirs ==="
+          find extracted -maxdepth 12 -type d -name frontend -print
+
+          FRONTEND_DIR=""
+          while IFS= read -r d; do
+            if [ -f "$d/package.json" ] && node -e "const p=require('./$d/package.json'); process.exit(p.scripts&&p.scripts.build?0:1)"; then
+              FRONTEND_DIR="$d"
+              break
+            fi
+          done < <(find extracted -maxdepth 12 -type d -name frontend | sort)
+
           echo "FRONTEND_DIR=$FRONTEND_DIR"
           test -n "$FRONTEND_DIR"
+
           cd "$FRONTEND_DIR"
           rm -f package-lock.json
           rm -rf node_modules
