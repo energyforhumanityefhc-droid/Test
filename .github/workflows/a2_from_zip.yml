@@ -41,34 +41,37 @@ jobs:
               break
             fi
           done < <(find extracted -maxdepth 12 -type d -name frontend | sort)
+
           echo "FRONTEND_DIR=$FRONTEND_DIR"
           test -n "$FRONTEND_DIR"
           echo "frontend_dir=$FRONTEND_DIR" >> "$GITHUB_OUTPUT"
 
-      - name: Patch DepositModal.tsx TS (items) via Python
+      - name: Patch DepositModal.tsx TS (items) via Python file
         run: |
           FRONTEND_DIR="${{ steps.pick_frontend.outputs.frontend_dir }}"
           FILE="$FRONTEND_DIR/src/components/DepositModal.tsx"
           echo "PATCH_FILE=$FILE"
           test -f "$FILE"
 
-          python - <<'PY'
+          cat > patch_depositmodal.py <<'PY'
 from pathlib import Path
+import sys
 
-path = Path("${FILE}")
-s = path.read_text(encoding="utf-8")
+file_path = Path(sys.argv[1])
+s = file_path.read_text(encoding="utf-8")
 
 old = "const items = (r?.items || []) as SalePackage[];"
-new = "const rr = r as unknown as { items?: SalePackage[] };\n    const items = rr.items ?? [];"
+new = "const rr = r as unknown as { items?: SalePackage[] };\\n    const items = rr.items ?? [];"
 
 if old not in s:
-    raise SystemExit(f"Expected line not found in {path}")
+    raise SystemExit("Expected line not found: " + old)
 
-s2 = s.replace(old, new, 1)
-path.write_text(s2, encoding="utf-8")
-print("Patched OK")
+s = s.replace(old, new, 1)
+file_path.write_text(s, encoding="utf-8")
+print("Patched OK:", str(file_path))
 PY
 
+          python patch_depositmodal.py "$FILE"
           echo "=== patched preview ==="
           grep -n "const rr = r as unknown as" "$FILE" || true
 
