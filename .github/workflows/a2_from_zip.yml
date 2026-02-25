@@ -1,4 +1,4 @@
-name: A2 from ZIP (lock + build)
+name: A2 lockfile
 
 on:
   workflow_dispatch:
@@ -9,27 +9,39 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: List repo files
+        run: ls -la
+
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
 
       - name: Unzip project
         run: |
-          ls -la
+          rm -rf extracted
+          mkdir -p extracted
           unzip -q project.zip -d extracted
+          echo "=== extracted top ==="
           ls -la extracted
+          echo "=== find frontend dirs ==="
+          find extracted -maxdepth 12 -type d -name frontend -print
 
-      - name: Configure npm auth + force public registry
+      - name: Remove any .npmrc inside extracted
         run: |
-          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+          find extracted -maxdepth 12 -name ".npmrc" -print -delete || true
+
+      - name: Force public npm registry
+        run: |
           npm config set registry https://registry.npmjs.org/
           npm config delete always-auth || true
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          npm config get registry
 
-      - name: Recreate lockfile + install + build
-        working-directory: extracted/frontend
+      - name: Generate lockfile + build
         run: |
+          FRONTEND_DIR="$(find extracted -maxdepth 12 -type d -name frontend | head -n 1)"
+          echo "FRONTEND_DIR=$FRONTEND_DIR"
+          test -n "$FRONTEND_DIR"
+          cd "$FRONTEND_DIR"
           rm -f package-lock.json
           rm -rf node_modules
           npm install @tonconnect/ui-react@2.4.0 --save-exact
@@ -40,4 +52,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: a2_lockfile
-          path: extracted/frontend/package-lock.json
+          path: extracted/**/frontend/package-lock.json
+``
