@@ -1,4 +1,4 @@
-name: CLEAN LOCKFILE + PATCH DepositModal + ProfileModal + BUILD
+name: CLEAN LOCKFILE + PATCH UI TYPING + BUILD
 
 on:
   workflow_dispatch:
@@ -51,43 +51,35 @@ jobs:
           rm -rf node_modules
           npm install --no-audit --no-fund
 
-      - name: Patch DepositModal.tsx + ProfileModal.tsx typing
+      - name: Patch UI typing (DepositModal + ProfileModal)
         run: |
           FRONTEND="${{ steps.pick_frontend.outputs.frontend_dir }}"
-
           DEP="$FRONTEND/src/components/DepositModal.tsx"
           PRO="$FRONTEND/src/components/ProfileModal.tsx"
 
           test -f "$DEP"
           test -f "$PRO"
 
-          # --- DepositModal: items ---
+          # DepositModal: items
           perl -0777 -pi -e 's/^\s*const\s+items\s*=\s*\(r\?\.\s*items\s*\|\|\s*\[\]\)\s*as\s*SalePackage\[\]\s*;\s*$/    const rr = r as unknown as { items?: SalePackage[] };\n    const items = rr.items ?? [];/m' "$DEP"
 
-          # --- DepositModal: tonconnect_tx ---
+          # DepositModal: tonconnect_tx
           perl -0777 -pi -e 's/^\s*const\s+tx\s*=\s*\(r\?\.\s*tonconnect_tx\s*\|\|\s*null\)\s*as\s*TonConnectTx\s*\|\s*null\s*;\s*$/    const rr_tx = r as unknown as { tonconnect_tx?: TonConnectTx | null };\n    const tx = rr_tx.tonconnect_tx ?? null;/m' "$DEP"
 
-          # Hard fail if old access remains
-          if grep -n "r\\?\\.tonconnect_tx" "$DEP"; then
-            echo "PATCH tonconnect_tx FAILED"
-            exit 2
-          fi
-          if grep -n "r\\?\\.items" "$DEP"; then
-            echo "PATCH items FAILED"
-            exit 2
-          fi
-
-          # --- ProfileModal: wallets ---
+          # ProfileModal: wallets (match exactly your failing line)
           perl -0777 -pi -e 's/^\s*const\s+items\s*=\s*\(r\?\.\s*wallets\s*\|\|\s*\[\]\)\s*as\s*WalletItem\[\]\s*;\s*$/    const rr_wallets = r as unknown as { wallets?: WalletItem[] };\n    const items = rr_wallets.wallets ?? [];/m' "$PRO"
 
-          # Hard fail if old access remains
-          if grep -n "r\\?\\.wallets" "$PRO"; then
-            echo "PATCH wallets FAILED"
+          echo "=== Verify patches applied ==="
+          echo "--- DepositModal (rr_tx/rr/items) ---"
+          grep -n "const rr_tx\|const rr = r as unknown as" "$DEP" || true
+          echo "--- ProfileModal (rr_wallets) ---"
+          grep -n "const rr_wallets" "$PRO" || true
+
+          # Hard fail if old optional chaining access still exists
+          if grep -n "r\\?\\.items" "$DEP" || grep -n "r\\?\\.tonconnect_tx" "$DEP" || grep -n "r\\?\\.wallets" "$PRO"; then
+            echo "PATCH FAILED: old r?.field still present"
             exit 2
           fi
-
-          echo "=== patched snippets ==="
-          grep -n "rr_tx\|rr_wallets\|wallets\|tonconnect_tx" "$DEP" "$PRO" | head -n 80 || true
 
       - name: Build
         run: |
