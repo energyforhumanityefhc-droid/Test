@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    timeout-minutes: 50
+    timeout-minutes: 55
     runs-on: ubuntu-latest
 
     steps:
@@ -41,21 +41,12 @@ jobs:
               ROOT_DIR="$d"
               break
             fi
-          done < <(find extracted -maxdepth 5 -type d -name efhc_baseline | sort)
-          if [ -z "$ROOT_DIR" ]; then
-            # fallback: any dir that contains tests/
-            while IFS= read -r d; do
-              if [ -d "$d/tests" ]; then
-                ROOT_DIR="$d"
-                break
-              fi
-            done < <(find extracted -maxdepth 6 -type d -print | sort)
-          fi
+          done < <(find extracted -maxdepth 6 -type d -print | sort)
           test -n "$ROOT_DIR"
           echo "root_dir=$ROOT_DIR" >> "$GITHUB_OUTPUT"
           echo "ROOT_DIR=$ROOT_DIR"
 
-      # ---------- Pick backend ----------
+      # ---------- Backend ----------
       - name: Pick backend dir
         id: pick_backend
         run: |
@@ -64,14 +55,17 @@ jobs:
           echo "backend_dir=$BACKEND_DIR" >> "$GITHUB_OUTPUT"
           echo "BACKEND_DIR=$BACKEND_DIR"
 
-      - name: Install backend deps (pip) + pytest
+      - name: Install backend deps (pip) + pytest stack
         run: |
           cd "${{ steps.pick_backend.outputs.backend_dir }}"
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
+          elif [ -f pyproject.toml ]; then
+            pip install -e . || true
           fi
-          pip install -U pytest
+          # Always ensure test/runtime deps exist for our suite
+          pip install -U pytest pytest-asyncio PyJWT
 
       - name: Backend compileall
         run: |
@@ -85,7 +79,7 @@ jobs:
           cd "${{ steps.pick_root.outputs.root_dir }}"
           pytest -q
 
-      # ---------- Pick frontend ----------
+      # ---------- Frontend ----------
       - name: Pick real frontend dir (must have scripts.build)
         id: pick_frontend
         run: |
@@ -113,24 +107,6 @@ jobs:
             echo "ERROR: lockfile contains internal registry"
             exit 2
           fi
-
-      - name: Install deps (CI deterministic)
-        run: |
-          cd "${{ steps.pick_frontend.outputs.frontend_dir }}"
-          rm -rf node_modules
-          npm ci --no-audit --no-fund
-
-      - name: Build
-        run: |
-          cd "${{ steps.pick_frontend.outputs.frontend_dir }}"
-          npm run build          cd "${{ steps.pick_frontend.outputs.frontend_dir }}"
-          rm -rf node_modules
-          npm ci --no-audit --no-fund
-
-      - name: Build
-        run: |
-          cd "${{ steps.pick_frontend.outputs.frontend_dir }}"
-          npm run build          fi
 
       - name: Install deps (CI deterministic)
         run: |
