@@ -51,12 +51,20 @@ jobs:
           rm -rf node_modules
           npm install --no-audit --no-fund
 
-      - name: Patch DepositModal.tsx (items typing)
+      - name: Patch DepositModal.tsx (items + tonconnect_tx typing)
         run: |
           FILE="${{ steps.pick_frontend.outputs.frontend_dir }}/src/components/DepositModal.tsx"
           test -f "$FILE"
+
+          # Patch 1: items
           perl -0777 -pi -e 's/const\s+items\s*=\s*\(r\?\.\s*items\s*\|\|\s*\[\]\)\s*as\s*SalePackage\[\]\s*;/const rr = r as unknown as { items?: SalePackage[] };\n    const items = rr.items ?? [];/m' "$FILE"
-          grep -n "const rr = r as unknown as" "$FILE" || (echo "PATCH FAILED" && exit 2)
+
+          # Patch 2: tonconnect_tx
+          perl -0777 -pi -e 's/const\s+tx\s*=\s*\(r\?\.\s*tonconnect_tx\s*\|\|\s*null\)\s*as\s*TonConnectTx\s*\|\s*null\s*;/const rr_tx = r as unknown as { tonconnect_tx?: TonConnectTx | null };\n    const tx = rr_tx.tonconnect_tx ?? null;/m' "$FILE"
+
+          # Sanity checks
+          grep -n "const rr = r as unknown as" "$FILE" || (echo "PATCH items FAILED" && exit 2)
+          grep -n "const rr_tx = r as unknown as" "$FILE" || (echo "PATCH tonconnect_tx FAILED" && exit 2)
 
       - name: Build
         run: |
