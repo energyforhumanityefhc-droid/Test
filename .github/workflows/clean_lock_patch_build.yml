@@ -55,11 +55,8 @@ jobs:
         run: |
           FILE="${{ steps.pick_frontend.outputs.frontend_dir }}/src/components/DepositModal.tsx"
           test -f "$FILE"
-          python -c "from pathlib import Path; p=Path('$FILE'); s=p.read_text(encoding='utf-8'); \
-old='const items = (r?.items || []) as SalePackage[];'; \
-new='const rr = r as unknown as { items?: SalePackage[] };\\n    const items = rr.items ?? [];'; \
-p.write_text(s.replace(old,new,1), encoding='utf-8') if old in s else (_ for _ in ()).throw(SystemExit('Expected line not found')); \
-print('Patched', p)"
+          perl -0777 -pi -e 's/const\s+items\s*=\s*\(r\?\.\s*items\s*\|\|\s*\[\]\)\s*as\s*SalePackage\[\]\s*;/const rr = r as unknown as { items?: SalePackage[] };\n    const items = rr.items ?? [];/m' "$FILE"
+          grep -n "const rr = r as unknown as" "$FILE" || (echo "PATCH FAILED" && exit 2)
 
       - name: Build
         run: |
