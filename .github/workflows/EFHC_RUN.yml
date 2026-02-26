@@ -1,4 +1,4 @@
-name: EFHC RUN (unzip + npm install + patch shop + build)
+name: EFHC RUN (unzip + npm ci + build) [CANON]
 
 on:
   workflow_dispatch:
@@ -38,31 +38,18 @@ jobs:
           echo "frontend_dir=$FRONTEND_DIR" >> "$GITHUB_OUTPUT"
           echo "FRONTEND_DIR=$FRONTEND_DIR"
 
-      - name: Force public npm registry
+      - name: Force public npm registry (diagnostic only)
         run: |
           npm config set registry https://registry.npmjs.org/
           npm config delete always-auth || true
           npm config get registry
 
-      - name: Install deps (regenerate lockfile)
+      - name: Assert package-lock.json exists in HEAD
         run: |
           cd "${{ steps.pick_frontend.outputs.frontend_dir }}"
-          rm -f package-lock.json
-          rm -rf node_modules
-          npm install --no-audit --no-fund
+          test -f package-lock.json
 
-      - name: Patch shop.tsx (hint -> detail for EmptyState)
-        run: |
-          FILE="${{ steps.pick_frontend.outputs.frontend_dir }}/src/pages/shop.tsx"
-          test -f "$FILE"
-          # Replace prop name "hint" with "detail" (JSX prop)
-          perl -0777 -pi -e 's/\bhint\s*=\s*\{/detail={/g' "$FILE"
-          # Show occurrences to confirm
-          echo "=== grep EmptyState props in shop.tsx ==="
-          grep -n "EmptyState" "$FILE" | head -n 50 || true
-          grep -n "\bdetail\s*=" "$FILE" | head -n 50 || true
-
-      - name: Verify lockfile is clean
+      - name: Verify lockfile is clean (no internal registry)
         run: |
           cd "${{ steps.pick_frontend.outputs.frontend_dir }}"
           if grep -n "applied-caas-gateway\|internal\.api\.openai\|artifactory" package-lock.json; then
@@ -70,19 +57,13 @@ jobs:
             exit 2
           fi
 
+      - name: Install deps (CI deterministic)
+        run: |
+          cd "${{ steps.pick_frontend.outputs.frontend_dir }}"
+          rm -rf node_modules
+          npm ci --no-audit --no-fund
+
       - name: Build
         run: |
           cd "${{ steps.pick_frontend.outputs.frontend_dir }}"
           npm run build
-
-      - name: Upload lockfile
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend_package_lock
-          path: ${{ steps.pick_frontend.outputs.frontend_dir }}/package-lock.json
-
-      - name: Upload patched shop.tsx
-        uses: actions/upload-artifact@v4
-        with:
-          name: patched_shop_tsx
-          path: ${{ steps.pick_frontend.outputs.frontend_dir }}/src/pages/shop.tsx
