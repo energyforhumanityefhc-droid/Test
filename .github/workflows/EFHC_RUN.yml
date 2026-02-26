@@ -1,4 +1,4 @@
-name: EFHC RUN (unzip + canon checks) [CANON]
+name: EFHC RUN (v147_37 canon) [CANON]
 
 on:
   workflow_dispatch:
@@ -11,12 +11,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ---------- Node ----------
       - uses: actions/setup-node@v4
         with:
           node-version: "18.20.4"
 
-      # ---------- Python ----------
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -31,8 +29,7 @@ jobs:
         run: |
           find extracted -maxdepth 12 -name ".npmrc" -print -delete || true
 
-      # ---------- Pick project root (must have tests/) ----------
-      - name: Pick project root dir (tests/)
+      - name: Pick project root (tests/)
         id: pick_root
         run: |
           ROOT_DIR=""
@@ -46,48 +43,26 @@ jobs:
           echo "root_dir=$ROOT_DIR" >> "$GITHUB_OUTPUT"
           echo "ROOT_DIR=$ROOT_DIR"
 
-      # ---------- Backend ----------
-      - name: Pick backend dir
-        id: pick_backend
+      - name: Install backend deps + pytest stack
         run: |
-          BACKEND_DIR="${{ steps.pick_root.outputs.root_dir }}/backend"
-          test -d "$BACKEND_DIR"
-          echo "backend_dir=$BACKEND_DIR" >> "$GITHUB_OUTPUT"
-          echo "BACKEND_DIR=$BACKEND_DIR"
-
-      - name: Install backend deps (pip) + test deps
-        run: |
-          cd "${{ steps.pick_backend.outputs.backend_dir }}"
+          cd "${{ steps.pick_root.outputs.root_dir }}/backend"
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
-          elif [ -f pyproject.toml ]; then
-            pip install -e . || true
           fi
-          # Always ensure test/runtime deps exist for suite
           pip install -U pytest pytest-asyncio PyJWT aiosqlite
 
       - name: Backend compileall
         run: |
-          cd "${{ steps.pick_backend.outputs.backend_dir }}"
+          cd "${{ steps.pick_root.outputs.root_dir }}/backend"
           python -m compileall . -q
 
-      - name: Backend pytest (run from project root, PYTHONPATH=root)
+      - name: Backend pytest (from root)
         env:
           PYTHONPATH: ${{ steps.pick_root.outputs.root_dir }}
         run: |
           cd "${{ steps.pick_root.outputs.root_dir }}"
           pytest -q
-
-      # ---------- Frontend ----------
-      - name: Pick real frontend dir (must have scripts.build)
-        id: pick_frontend
-        run: |
-          FRONTEND_DIR="${{ steps.pick_root.outputs.root_dir }}/frontend"
-          test -f "$FRONTEND_DIR/package.json"
-          node -e "const p=require('./'+'${{ steps.pick_root.outputs.root_dir }}'+'/frontend/package.json'); process.exit(p.scripts && p.scripts.build ? 0 : 1)"
-          echo "frontend_dir=$FRONTEND_DIR" >> "$GITHUB_OUTPUT"
-          echo "FRONTEND_DIR=$FRONTEND_DIR"
 
       - name: Force public npm registry (diagnostic only)
         run: |
@@ -95,26 +70,26 @@ jobs:
           npm config delete always-auth || true
           npm config get registry
 
-      - name: Assert package-lock.json exists in HEAD
+      - name: Frontend lockfile must exist
         run: |
-          cd "${{ steps.pick_frontend.outputs.frontend_dir }}"
+          cd "${{ steps.pick_root.outputs.root_dir }}/frontend"
           test -f package-lock.json
 
       - name: Verify lockfile is clean (no internal registry)
         run: |
-          cd "${{ steps.pick_frontend.outputs.frontend_dir }}"
+          cd "${{ steps.pick_root.outputs.root_dir }}/frontend"
           if grep -n "applied-caas-gateway\|internal\.api\.openai\|artifactory" package-lock.json; then
             echo "ERROR: lockfile contains internal registry"
             exit 2
           fi
 
-      - name: Install deps (CI deterministic)
+      - name: Frontend npm ci
         run: |
-          cd "${{ steps.pick_frontend.outputs.frontend_dir }}"
+          cd "${{ steps.pick_root.outputs.root_dir }}/frontend"
           rm -rf node_modules
           npm ci --no-audit --no-fund
 
-      - name: Build
+      - name: Frontend build
         run: |
-          cd "${{ steps.pick_frontend.outputs.frontend_dir }}"
+          cd "${{ steps.pick_root.outputs.root_dir }}/frontend"
           npm run build
