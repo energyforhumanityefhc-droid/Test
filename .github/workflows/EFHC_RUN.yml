@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    timeout-minutes: 45
+    timeout-minutes: 50
     runs-on: ubuntu-latest
 
     steps:
@@ -31,18 +31,36 @@ jobs:
         run: |
           find extracted -maxdepth 12 -name ".npmrc" -print -delete || true
 
+      # ---------- Pick project root (must have tests/) ----------
+      - name: Pick project root dir (tests/)
+        id: pick_root
+        run: |
+          ROOT_DIR=""
+          while IFS= read -r d; do
+            if [ -d "$d/tests" ]; then
+              ROOT_DIR="$d"
+              break
+            fi
+          done < <(find extracted -maxdepth 5 -type d -name efhc_baseline | sort)
+          if [ -z "$ROOT_DIR" ]; then
+            # fallback: any dir that contains tests/
+            while IFS= read -r d; do
+              if [ -d "$d/tests" ]; then
+                ROOT_DIR="$d"
+                break
+              fi
+            done < <(find extracted -maxdepth 6 -type d -print | sort)
+          fi
+          test -n "$ROOT_DIR"
+          echo "root_dir=$ROOT_DIR" >> "$GITHUB_OUTPUT"
+          echo "ROOT_DIR=$ROOT_DIR"
+
       # ---------- Pick backend ----------
       - name: Pick backend dir
         id: pick_backend
         run: |
-          BACKEND_DIR=""
-          while IFS= read -r d; do
-            if [ -d "$d/app" ] || [ -f "$d/pyproject.toml" ] || [ -f "$d/requirements.txt" ]; then
-              BACKEND_DIR="$d"
-              break
-            fi
-          done < <(find extracted -maxdepth 12 -type d -name backend | sort)
-          test -n "$BACKEND_DIR"
+          BACKEND_DIR="${{ steps.pick_root.outputs.root_dir }}/backend"
+          test -d "$BACKEND_DIR"
           echo "backend_dir=$BACKEND_DIR" >> "$GITHUB_OUTPUT"
           echo "BACKEND_DIR=$BACKEND_DIR"
 
@@ -52,9 +70,6 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
-          elif [ -f pyproject.toml ]; then
-            # minimal: ensure pytest exists; try editable install if possible
-            pip install -e . || true
           fi
           pip install -U pytest
 
@@ -63,23 +78,20 @@ jobs:
           cd "${{ steps.pick_backend.outputs.backend_dir }}"
           python -m compileall . -q
 
-      - name: Backend pytest
+      - name: Backend pytest (run from project root)
+        env:
+          PYTHONPATH: ${{ steps.pick_root.outputs.root_dir }}/backend
         run: |
-          cd "${{ steps.pick_backend.outputs.backend_dir }}"
+          cd "${{ steps.pick_root.outputs.root_dir }}"
           pytest -q
 
       # ---------- Pick frontend ----------
       - name: Pick real frontend dir (must have scripts.build)
         id: pick_frontend
         run: |
-          FRONTEND_DIR=""
-          while IFS= read -r d; do
-            if [ -f "$d/package.json" ] && node -e "const p=require('./$d/package.json'); process.exit(p.scripts && p.scripts.build ? 0 : 1)"; then
-              FRONTEND_DIR="$d"
-              break
-            fi
-          done < <(find extracted -maxdepth 12 -type d -name frontend | sort)
-          test -n "$FRONTEND_DIR"
+          FRONTEND_DIR="${{ steps.pick_root.outputs.root_dir }}/frontend"
+          test -f "$FRONTEND_DIR/package.json"
+          node -e "const p=require('./'+'${{ steps.pick_root.outputs.root_dir }}'+'/frontend/package.json'); process.exit(p.scripts && p.scripts.build ? 0 : 1)"
           echo "frontend_dir=$FRONTEND_DIR" >> "$GITHUB_OUTPUT"
           echo "FRONTEND_DIR=$FRONTEND_DIR"
 
@@ -105,6 +117,13 @@ jobs:
       - name: Install deps (CI deterministic)
         run: |
           cd "${{ steps.pick_frontend.outputs.frontend_dir }}"
+          rm -rf node_modules
+          npm ci --no-audit --no-fund
+
+      - name: Build
+        run: |
+          cd "${{ steps.pick_frontend.outputs.frontend_dir }}"
+          npm run build          cd "${{ steps.pick_frontend.outputs.frontend_dir }}"
           rm -rf node_modules
           npm ci --no-audit --no-fund
 
