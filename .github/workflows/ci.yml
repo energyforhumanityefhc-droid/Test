@@ -1,12 +1,14 @@
-name: canon
+name: EFHC CI (Postgres-only CANON, ZIP in repo)
 
 on:
+  workflow_dispatch:
   push:
   pull_request:
 
 jobs:
   canon:
     runs-on: ubuntu-latest
+    timeout-minutes: 75
 
     services:
       postgres:
@@ -18,15 +20,17 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres -d efhc_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 30
+          --health-cmd="pg_isready -U postgres -d efhc_test"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
 
     env:
+      # CANON: Postgres-only. SQLite forbidden.
       DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/efhc_test
       SYNC_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/efhc_test
-      ASYNC_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/efhc_test
+      ASYNC_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/efhc_test
+
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
       PIP_NO_PYTHON_VERSION_WARNING: "1"
 
@@ -39,7 +43,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "18.20.4"
 
       - name: Guard DB profile (Postgres-only)
         run: |
@@ -56,103 +60,142 @@ jobs:
           print("OK: Postgres-only profile")
           PY
 
-      - name: Ensure project.zip exists in repo root (canon)
-        run: |
-          set -e
-          if [ -f project.zip ]; then
-            echo "OK: project.zip exists"
-            exit 0
-          fi
-
-          echo "WARN: project.zip not found in repo root"
-          echo "Root directory listing:"
-          ls -la
-
-          CANDIDATE="$(ls -1 EFHC_Bot_*.zip 2>/dev/null | head -n 1 || true)"
-          if [ -n "$CANDIDATE" ]; then
-            echo "Found candidate zip: $CANDIDATE"
-            cp "$CANDIDATE" project.zip
-            echo "Created project.zip from $CANDIDATE"
-            ls -la project.zip
-            exit 0
-          fi
-
-          echo "ERROR: project.zip not found and no EFHC_Bot_*.zip candidate present"
-          exit 1
-
       - name: Unzip project.zip
         run: |
+          test -f project.zip || (echo "ERROR: project.zip not found in repo root" && exit 1)
           rm -rf extracted
           mkdir -p extracted
           unzip -q project.zip -d extracted
           find extracted -maxdepth 12 -name ".npmrc" -print -delete || true
 
-      - name: Guard grep bans (repo-wide in extracted)
+      - name: Verify extracted structure
         run: |
-          set -e
-          cd extracted
+          test -d extracted/backend
+          test -d extracted/frontend
+          test -d extracted/tests
+
+      - name: Canon bans scan (text-only, no forbidden literals in workflow)
+        run: |
           python - <<'PY'
           import os, re, sys
-          banned = [
-            ("telegram_id", re.compile(r"telegram_id", re.IGNORECASE)),
-            ("rating|reiting|raiting", re.compile(r"rating|reiting|raiting", re.IGNORECASE)),
-            ("tgId (not tg_id)", re.compile(r"\btgId\b", re.IGNORECASE)),
-            ("\\buid\\b", re.compile(r"\buid\b", re.IGNORECASE)),
-          ]
+
+          # Build forbidden tokens WITHOUT placing them literally in this workflow file.
+          tok_telegram_id = "tele" + "gram" + "_" + "id"
+          tok_tgId = "tg" + "Id"
+          tok_rating = "rat" + "ing"
+          tok_reiting = "rei" + "ting"
+          tok_raiting = "rai" + "ting"
+
+          # Word boundary uid without literal \buid\b sequence in file
+          uid_word = r"\b" + "uid" + r"\b"
+
+          rx_banned_ids = re.compile(rf"({tok_telegram_id}|{tok_tgId}|{uid_word})", re.IGNORECASE)
+          rx_banned_rating = re.compile(rf"({tok_rating}|{tok_reiting}|{tok_raiting})", re.IGNORECASE)
+
+          # Binary skip: extensions + NUL byte sniff
+          skip_ext = {
+            ".png",".jpg",".jpeg",".gif",".webp",".ico",".pdf",
+            ".zip",".gz",".bz2",".7z",".rar",
+            ".woff",".woff2",".ttf",".otf",".eot",
+            ".mp3",".mp4",".mov",".avi",".mkv",
+            ".bin",".exe",".dll",".so",".dylib"
+          }
+
           hits = []
-          for root, _, files in os.walk("."):
-            for fn in files:
-              path = os.path.join(root, fn)
+
+          root = "extracted"
+          for dirpath, _, filenames in os.walk(root):
+            for fn in filenames:
+              path = os.path.join(dirpath, fn)
+              _, ext = os.path.splitext(fn.lower())
+              if ext in skip_ext:
+                continue
+
               try:
                 with open(path, "rb") as f:
-                  data = f.read()
+                  chunk = f.read(4096)
+                  if b"\x00" in chunk:
+                    continue  # likely binary
+                  data = chunk + f.read()
               except Exception:
                 continue
-              try:
-                text = data.decode("utf-8", errors="replace")
-              except Exception:
-                continue
-              for name, rx in banned:
+
+              text = data.decode("utf-8", errors="replace")
+
+              for rx, label in [(rx_banned_ids, "banned_ids"), (rx_banned_rating, "banned_rating")]:
                 m = rx.search(text)
                 if m:
-                  hits.append((name, path, m.start()))
+                  # compute line/col
+                  before = text[:m.start()]
+                  line = before.count("\n") + 1
+                  col = m.start() - (before.rfind("\n") + 1)
+                  frag = text[m.start():m.start()+80].replace("\n","\\n")
+                  hits.append((label, path, line, col, frag))
+
           if hits:
-            print("ERROR: forbidden identifiers found:")
-            for name, path, pos in hits[:50]:
-              print(f"- {name}: {path} @ {pos}")
-            sys.exit(1)
-          print("OK: bans check passed")
+            print("ERROR: forbidden tokens detected (text-only scan):")
+            for label, path, line, col, frag in hits[:200]:
+              print(f"- {label}: {path}:{line}:{col}: {frag}")
+            sys.exit(3)
+
+          print("OK: canon bans scan passed (text-only).")
           PY
 
-      - name: Backend deps
+      # ---------------- Backend ----------------
+      - name: Install backend deps (pip)
         run: |
           python -m pip install --upgrade pip
-          pip install -r extracted/backend/requirements.txt
+          if [ -f extracted/backend/requirements.txt ]; then
+            pip install -r extracted/backend/requirements.txt
+          fi
+          pip install -U pytest pytest-asyncio alembic "psycopg[binary]" PyJWT
+          python -m pip install flake8==7.1.1
 
-      - name: compileall (backend)
+      - name: Lint (flake8)
+        run: |
+          cd extracted
+          TARGETS=""
+          [ -d backend ] && TARGETS="$TARGETS backend"
+          [ -d tests ] && TARGETS="$TARGETS tests"
+          [ -d ops ] && TARGETS="$TARGETS ops"
+          test -n "$TARGETS"
+          flake8 $TARGETS --exclude=.pytest_cache,__pycache__
+
+      - name: Backend compileall
         run: |
           python -m compileall extracted/backend -q
 
-      - name: Alembic upgrade head (Postgres-only)
+      - name: Alembic upgrade head (Postgres)
         run: |
-          cd extracted/backend
-          alembic -c alembic.ini upgrade head
+          cd extracted
+          test -f backend/alembic.ini
+          alembic -c backend/alembic.ini upgrade head
 
-      - name: pytest (Postgres-only)
+      - name: Pytest (Postgres-only)
+        env:
+          PYTHONPATH: ${{ github.workspace }}/extracted
         run: |
           cd extracted
           pytest -q
 
-      - name: Frontend lockfile checks + build
+      # ---------------- Frontend ----------------
+      - name: Frontend lockfile must be clean (no internal registry)
         run: |
-          set -e
-          test -f extracted/frontend/package-lock.json || (echo "ERROR: package-lock.json missing" && exit 1)
-
-          if grep -RInE "applied-caas-gateway|internal\.api\.openai|artifactory" extracted/frontend/package-lock.json; then
-            echo "ERROR: forbidden registry markers in package-lock.json"
-            exit 1
+          cd extracted/frontend
+          test -f package-lock.json
+          if grep -n "applied-caas-gateway\|internal\.api\.openai\|artifactory" package-lock.json; then
+            echo "ERROR: lockfile contains internal registry"
+            exit 2
           fi
 
+      - name: Frontend npm ci
+        run: |
           cd extracted/frontend
-          npm ci
+          npm config set registry https://registry.npmjs.org/
+          rm -rf node_modules
+          npm ci --no-audit --no-fund
+
+      - name: Frontend build
+        run: |
+          cd extracted/frontend
           npm run build
