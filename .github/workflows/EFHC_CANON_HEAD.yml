@@ -63,18 +63,24 @@ jobs:
           perl -0777 -pi -e 's/^\s*const\s+tx\s*=\s*\(r\?\.\s*tonconnect_tx\s*\|\|\s*null\)\s*as\s*TonConnectTx\s*\|\s*null\s*;\s*$/    const rr_tx = r as unknown as { tonconnect_tx?: TonConnectTx | null };\n    const tx = rr_tx.tonconnect_tx ?? null;/m' "$DEP"
 
           # ---- ProfileModal fixes ----
-          # Insert rr_wallets after the apiRequest call (if not present)
+          # Insert rr_wallets after the apiRequest line (if not present)
           perl -0777 -pi -e 's/(const\s+r\s*=\s*await\s+apiRequest\(\s*["'\'']\/wallets\/me["'\'']\s*,\s*["'\'']GET["'\'']\s*\)\s*;\s*\n)(?!\s*const\s+rr_wallets\s*=)/$1    const rr_wallets = r as unknown as { wallets?: WalletItem[] };\n/m' "$PRO"
 
-          # Replace the common items line if present
+          # Replace the items line variants
           perl -0777 -pi -e 's/^\s*const\s+items\s*=\s*\(r\?\.\s*wallets\s*\|\|\s*\[\]\)\s*as\s*WalletItem\[\]\s*;\s*$/    const items = rr_wallets.wallets ?? [];/m' "$PRO"
+          perl -0777 -pi -e 's/^\s*const\s+items\s*=\s*\(r\.\s*wallets\s*\|\|\s*\[\]\)\s*as\s*WalletItem\[\]\s*;\s*$/    const items = rr_wallets.wallets ?? [];/m' "$PRO"
 
-          # Replace ALL remaining r?.wallets usages anywhere in ProfileModal
+          # Replace ANY remaining r?.wallets and r.wallets usages
           perl -0777 -pi -e 's/r\?\.\s*wallets/rr_wallets.wallets/gm' "$PRO"
+          perl -0777 -pi -e 's/\br\.\s*wallets\b/rr_wallets.wallets/gm' "$PRO"
 
-          echo "=== VERIFY ProfileModal r?.wallets remnants (must be none) ==="
+          echo "=== VERIFY ProfileModal wallets remnants (must be none) ==="
           if grep -n "r\\?\\.wallets" "$PRO"; then
-            echo "STILL HAS r?.wallets (showing lines above)"
+            echo "STILL HAS r?.wallets"
+            exit 2
+          fi
+          if grep -n "\br\.wallets\b" "$PRO"; then
+            echo "STILL HAS r.wallets"
             exit 2
           fi
 
