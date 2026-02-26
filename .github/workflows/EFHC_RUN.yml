@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    timeout-minutes: 40
+    timeout-minutes: 45
     runs-on: ubuntu-latest
 
     steps:
@@ -37,7 +37,6 @@ jobs:
         run: |
           BACKEND_DIR=""
           while IFS= read -r d; do
-            # Typical EFHC layout: <root>/backend/app/...
             if [ -d "$d/app" ] || [ -f "$d/pyproject.toml" ] || [ -f "$d/requirements.txt" ]; then
               BACKEND_DIR="$d"
               break
@@ -47,20 +46,17 @@ jobs:
           echo "backend_dir=$BACKEND_DIR" >> "$GITHUB_OUTPUT"
           echo "BACKEND_DIR=$BACKEND_DIR"
 
-      - name: Install backend deps (pip)
+      - name: Install backend deps (pip) + pytest
         run: |
           cd "${{ steps.pick_backend.outputs.backend_dir }}"
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
           elif [ -f pyproject.toml ]; then
-            # Fallback for pyproject-based builds (no poetry magic, just enough for tests)
-            pip install -U pytest
-            # If project is installable, try editable install; if not, tests may still work with deps vendored
+            # minimal: ensure pytest exists; try editable install if possible
             pip install -e . || true
-          else
-            pip install -U pytest
           fi
+          pip install -U pytest
 
       - name: Backend compileall
         run: |
@@ -105,6 +101,17 @@ jobs:
             echo "ERROR: lockfile contains internal registry"
             exit 2
           fi
+
+      - name: Install deps (CI deterministic)
+        run: |
+          cd "${{ steps.pick_frontend.outputs.frontend_dir }}"
+          rm -rf node_modules
+          npm ci --no-audit --no-fund
+
+      - name: Build
+        run: |
+          cd "${{ steps.pick_frontend.outputs.frontend_dir }}"
+          npm run build          fi
 
       - name: Install deps (CI deterministic)
         run: |
