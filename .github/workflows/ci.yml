@@ -26,6 +26,7 @@ jobs:
           --health-retries=30
 
     env:
+      # CANON: Postgres-only. SQLite forbidden.
       DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/efhc_test
       SYNC_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/efhc_test
       ASYNC_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/efhc_test
@@ -100,6 +101,18 @@ jobs:
             pip install -r extracted/backend/requirements.txt
           fi
           pip install -U pytest pytest-asyncio alembic "psycopg[binary]" PyJWT aiosqlite
+          python -m pip install flake8==7.1.1
+
+      - name: Lint (flake8)
+        run: |
+          cd extracted
+          # Запускаем flake8 только по существующим папкам.
+          TARGETS=""
+          [ -d backend ] && TARGETS="$TARGETS backend"
+          [ -d tests ] && TARGETS="$TARGETS tests"
+          [ -d ops ] && TARGETS="$TARGETS ops"
+          test -n "$TARGETS"
+          flake8 $TARGETS --exclude=.pytest_cache,__pycache__
 
       - name: Backend compileall
         run: |
