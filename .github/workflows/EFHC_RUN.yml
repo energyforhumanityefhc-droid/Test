@@ -1,18 +1,25 @@
-name: EFHC RUN (unzip + npm ci + build) [CANON]
+name: EFHC RUN (unzip + canon checks) [CANON]
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    timeout-minutes: 35
+    timeout-minutes: 40
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
+      # ---------- Node ----------
       - uses: actions/setup-node@v4
         with:
           node-version: "18.20.4"
+
+      # ---------- Python ----------
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
       - name: Unzip project.zip
         run: |
@@ -24,6 +31,48 @@ jobs:
         run: |
           find extracted -maxdepth 12 -name ".npmrc" -print -delete || true
 
+      # ---------- Pick backend ----------
+      - name: Pick backend dir
+        id: pick_backend
+        run: |
+          BACKEND_DIR=""
+          while IFS= read -r d; do
+            # Typical EFHC layout: <root>/backend/app/...
+            if [ -d "$d/app" ] || [ -f "$d/pyproject.toml" ] || [ -f "$d/requirements.txt" ]; then
+              BACKEND_DIR="$d"
+              break
+            fi
+          done < <(find extracted -maxdepth 12 -type d -name backend | sort)
+          test -n "$BACKEND_DIR"
+          echo "backend_dir=$BACKEND_DIR" >> "$GITHUB_OUTPUT"
+          echo "BACKEND_DIR=$BACKEND_DIR"
+
+      - name: Install backend deps (pip)
+        run: |
+          cd "${{ steps.pick_backend.outputs.backend_dir }}"
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          elif [ -f pyproject.toml ]; then
+            # Fallback for pyproject-based builds (no poetry magic, just enough for tests)
+            pip install -U pytest
+            # If project is installable, try editable install; if not, tests may still work with deps vendored
+            pip install -e . || true
+          else
+            pip install -U pytest
+          fi
+
+      - name: Backend compileall
+        run: |
+          cd "${{ steps.pick_backend.outputs.backend_dir }}"
+          python -m compileall . -q
+
+      - name: Backend pytest
+        run: |
+          cd "${{ steps.pick_backend.outputs.backend_dir }}"
+          pytest -q
+
+      # ---------- Pick frontend ----------
       - name: Pick real frontend dir (must have scripts.build)
         id: pick_frontend
         run: |
