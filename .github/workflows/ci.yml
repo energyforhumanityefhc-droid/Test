@@ -9,7 +9,7 @@ on:
 jobs:
   canon:
     runs-on: ubuntu-latest
-    timeout-minutes: 70
+    timeout-minutes: 75
 
     services:
       postgres:
@@ -27,11 +27,9 @@ jobs:
           --health-retries=30
 
     env:
-      # CANON: Postgres-only. SQLite forbidden.
       DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/efhc_test
       SYNC_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/efhc_test
       ASYNC_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/efhc_test
-
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
       PIP_NO_PYTHON_VERSION_WARNING: "1"
 
@@ -57,16 +55,16 @@ jobs:
           if url.startswith("sqlite://"):
             print("ERROR: SQLite is forbidden by CANON")
             sys.exit(3)
-          print("OK: Postgres-only profile:", url)
+          print("OK: Postgres-only:", url)
           PY
 
       - name: Unzip project.zip
         run: |
-          test -f project.zip
+          ls -la
+          test -f project.zip || (echo "ERROR: project.zip not found in repo root" && exit 1)
           rm -rf extracted
           mkdir -p extracted
           unzip -q project.zip -d extracted
-          # запрет .npmrc внутри архива (чтобы не тащило internal registry)
           find extracted -maxdepth 12 -name ".npmrc" -print -delete || true
 
       - name: Verify extracted structure
@@ -82,17 +80,17 @@ jobs:
           if [ -f extracted/backend/requirements.txt ]; then
             pip install -r extracted/backend/requirements.txt
           fi
-          # тестовый стек + Postgres драйвер
           pip install -U pytest pytest-asyncio alembic "psycopg[binary]" PyJWT aiosqlite
 
       - name: Backend compileall
         run: |
           python -m compileall extracted/backend -q
 
-      - name: Alembic upgrade head (Postgres)
+      - name: Alembic upgrade head (Postgres) [run from extracted root]
         run: |
-          cd extracted/backend
-          alembic upgrade head
+          cd extracted
+          test -f backend/alembic.ini
+          alembic -c backend/alembic.ini upgrade head
 
       - name: Pytest (Postgres-only)
         env:
