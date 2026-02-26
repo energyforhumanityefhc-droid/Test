@@ -1,4 +1,4 @@
-name: CLEAN LOCKFILE + PATCH DepositModal + BUILD
+name: CLEAN LOCKFILE + PATCH DepositModal + ProfileModal + BUILD
 
 on:
   workflow_dispatch:
@@ -51,25 +51,43 @@ jobs:
           rm -rf node_modules
           npm install --no-audit --no-fund
 
-      - name: Patch DepositModal.tsx (items + tonconnect_tx typing)
+      - name: Patch DepositModal.tsx + ProfileModal.tsx typing
         run: |
-          FILE="${{ steps.pick_frontend.outputs.frontend_dir }}/src/components/DepositModal.tsx"
-          test -f "$FILE"
+          FRONTEND="${{ steps.pick_frontend.outputs.frontend_dir }}"
 
-          # Patch 1: items (broad)
-          perl -0777 -pi -e 's/^\s*const\s+items\s*=\s*\(r\?\.\s*items\s*\|\|\s*\[\]\)\s*as\s*SalePackage\[\]\s*;\s*$/    const rr = r as unknown as { items?: SalePackage[] };\n    const items = rr.items ?? [];/m' "$FILE"
+          DEP="$FRONTEND/src/components/DepositModal.tsx"
+          PRO="$FRONTEND/src/components/ProfileModal.tsx"
 
-          # Patch 2: tonconnect_tx (VERY broad, matches your exact line)
-          perl -0777 -pi -e 's/^\s*const\s+tx\s*=\s*\(r\?\.\s*tonconnect_tx\s*\|\|\s*null\)\s*as\s*TonConnectTx\s*\|\s*null\s*;\s*$/    const rr_tx = r as unknown as { tonconnect_tx?: TonConnectTx | null };\n    const tx = rr_tx.tonconnect_tx ?? null;/m' "$FILE"
+          test -f "$DEP"
+          test -f "$PRO"
 
-          # Sanity: show the relevant lines
-          grep -n "rr_tx\|tonconnect_tx" "$FILE" || true
+          # --- DepositModal: items ---
+          perl -0777 -pi -e 's/^\s*const\s+items\s*=\s*\(r\?\.\s*items\s*\|\|\s*\[\]\)\s*as\s*SalePackage\[\]\s*;\s*$/    const rr = r as unknown as { items?: SalePackage[] };\n    const items = rr.items ?? [];/m' "$DEP"
 
-          # Hard fail if tonconnect_tx line still exists
-          if grep -n "r\\?\\.tonconnect_tx" "$FILE"; then
+          # --- DepositModal: tonconnect_tx ---
+          perl -0777 -pi -e 's/^\s*const\s+tx\s*=\s*\(r\?\.\s*tonconnect_tx\s*\|\|\s*null\)\s*as\s*TonConnectTx\s*\|\s*null\s*;\s*$/    const rr_tx = r as unknown as { tonconnect_tx?: TonConnectTx | null };\n    const tx = rr_tx.tonconnect_tx ?? null;/m' "$DEP"
+
+          # Hard fail if old access remains
+          if grep -n "r\\?\\.tonconnect_tx" "$DEP"; then
             echo "PATCH tonconnect_tx FAILED"
             exit 2
           fi
+          if grep -n "r\\?\\.items" "$DEP"; then
+            echo "PATCH items FAILED"
+            exit 2
+          fi
+
+          # --- ProfileModal: wallets ---
+          perl -0777 -pi -e 's/^\s*const\s+items\s*=\s*\(r\?\.\s*wallets\s*\|\|\s*\[\]\)\s*as\s*WalletItem\[\]\s*;\s*$/    const rr_wallets = r as unknown as { wallets?: WalletItem[] };\n    const items = rr_wallets.wallets ?? [];/m' "$PRO"
+
+          # Hard fail if old access remains
+          if grep -n "r\\?\\.wallets" "$PRO"; then
+            echo "PATCH wallets FAILED"
+            exit 2
+          fi
+
+          echo "=== patched snippets ==="
+          grep -n "rr_tx\|rr_wallets\|wallets\|tonconnect_tx" "$DEP" "$PRO" | head -n 80 || true
 
       - name: Build
         run: |
@@ -87,3 +105,9 @@ jobs:
         with:
           name: patched_DepositModal_tsx
           path: ${{ steps.pick_frontend.outputs.frontend_dir }}/src/components/DepositModal.tsx
+
+      - name: Upload patched ProfileModal.tsx
+        uses: actions/upload-artifact@v4
+        with:
+          name: patched_ProfileModal_tsx
+          path: ${{ steps.pick_frontend.outputs.frontend_dir }}/src/components/ProfileModal.tsx
