@@ -58,12 +58,24 @@ jobs:
           test -f "$DEP"
           test -f "$PRO"
 
+          # DepositModal: items
           perl -0777 -pi -e 's/^\s*const\s+items\s*=\s*\(r\?\.\s*items\s*\|\|\s*\[\]\)\s*as\s*SalePackage\[\]\s*;\s*$/    const rr = r as unknown as { items?: SalePackage[] };\n    const items = rr.items ?? [];/m' "$DEP"
-          perl -0777 -pi -e 's/^\s*const\s+tx\s*=\s*\(r\?\.\s*tonconnect_tx\s*\|\|\s*null\)\s*as\s*TonConnectTx\s*\|\s*null\s*;\s*$/    const rr_tx = r as unknown as { tonconnect_tx?: TonConnectTx | null };\n    const tx = rr_tx.tonconnect_tx ?? null;/m' "$DEP"
-          perl -0777 -pi -e 's/^\s*const\s+items\s*=\s*\(r\?\.\s*wallets\s*\|\|\s*\[\]\)\s*as\s*WalletItem\[\]\s*;\s*$/    const rr_wallets = r as unknown as { wallets?: WalletItem[] };\n    const items = rr_wallets.wallets ?? [];/m' "$PRO"
 
-          # fail fast if old access still present
-          if grep -n "r\\?\\.wallets" "$PRO"; then echo "PATCH wallets FAILED" && exit 2; fi
+          # DepositModal: tonconnect_tx
+          perl -0777 -pi -e 's/^\s*const\s+tx\s*=\s*\(r\?\.\s*tonconnect_tx\s*\|\|\s*null\)\s*as\s*TonConnectTx\s*\|\s*null\s*;\s*$/    const rr_tx = r as unknown as { tonconnect_tx?: TonConnectTx | null };\n    const tx = rr_tx.tonconnect_tx ?? null;/m' "$DEP"
+
+          # ProfileModal: wallets (VERY broad — replace any line that declares items from r?.wallets)
+          perl -0777 -pi -e 's/^\s*const\s+items\s*=\s*\(r\?\.\s*wallets\s*\|\|\s*\[\]\)\s*as\s*WalletItem\[\]\s*;\s*$/    const rr_wallets = r as unknown as { wallets?: WalletItem[] };\n    const items = rr_wallets.wallets ?? [];/m' "$PRO"
+          perl -0777 -pi -e 's/^\s*const\s+items\s*=\s*\(r\?\.\s*wallets\s*\|\|\s*\[\]\)\s*as\s*WalletItem\[\]\s*\|\s*\[\]\s*;\s*$/    const rr_wallets = r as unknown as { wallets?: WalletItem[] };\n    const items = rr_wallets.wallets ?? [];/m' "$PRO"
+          # Fallback: if formatting differs, replace any occurrence of "(r?.wallets || []) as WalletItem[]" inside the file
+          perl -0777 -pi -e 's/\(r\?\.\s*wallets\s*\|\|\s*\[\]\)\s*as\s*WalletItem\[\]/rr_wallets.wallets ?? []/g' "$PRO"
+
+          echo "=== VERIFY ProfileModal wallets remnants ==="
+          if grep -n "r\\?\\.wallets" "$PRO"; then
+            echo "PATCH wallets FAILED (still have r?.wallets)"
+            exit 2
+          fi
+          grep -n "rr_wallets" "$PRO" | head -n 20 || (echo "PATCH wallets FAILED (no rr_wallets)" && exit 2)
 
       - name: Build
         run: |
