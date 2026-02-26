@@ -1,4 +1,4 @@
-name: EFHC RUN (unzip + npm install + build)
+name: EFHC RUN (unzip + npm install + patch shop + build)
 
 on:
   workflow_dispatch:
@@ -19,10 +19,6 @@ jobs:
           rm -rf extracted
           mkdir -p extracted
           unzip -q project.zip -d extracted
-          echo "=== extracted top ==="
-          ls -la extracted
-          echo "=== find frontend dirs ==="
-          find extracted -maxdepth 12 -type d -name frontend -print
 
       - name: Remove any .npmrc inside extracted
         run: |
@@ -55,6 +51,17 @@ jobs:
           rm -rf node_modules
           npm install --no-audit --no-fund
 
+      - name: Patch shop.tsx (hint -> detail for EmptyState)
+        run: |
+          FILE="${{ steps.pick_frontend.outputs.frontend_dir }}/src/pages/shop.tsx"
+          test -f "$FILE"
+          # Replace prop name "hint" with "detail" (JSX prop)
+          perl -0777 -pi -e 's/\bhint\s*=\s*\{/detail={/g' "$FILE"
+          # Show occurrences to confirm
+          echo "=== grep EmptyState props in shop.tsx ==="
+          grep -n "EmptyState" "$FILE" | head -n 50 || true
+          grep -n "\bdetail\s*=" "$FILE" | head -n 50 || true
+
       - name: Verify lockfile is clean
         run: |
           cd "${{ steps.pick_frontend.outputs.frontend_dir }}"
@@ -62,7 +69,6 @@ jobs:
             echo "ERROR: lockfile contains internal registry"
             exit 2
           fi
-          echo "OK: lockfile looks public"
 
       - name: Build
         run: |
@@ -74,3 +80,9 @@ jobs:
         with:
           name: frontend_package_lock
           path: ${{ steps.pick_frontend.outputs.frontend_dir }}/package-lock.json
+
+      - name: Upload patched shop.tsx
+        uses: actions/upload-artifact@v4
+        with:
+          name: patched_shop_tsx
+          path: ${{ steps.pick_frontend.outputs.frontend_dir }}/src/pages/shop.tsx
