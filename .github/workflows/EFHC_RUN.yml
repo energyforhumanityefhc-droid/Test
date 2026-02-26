@@ -1,23 +1,24 @@
-name: EFHC RUN (v147_37 canon) [CANON]
+name: EFHC CANON RUN (v147_36)
 
 on:
   workflow_dispatch:
+  push:
 
 jobs:
-  build:
-    timeout-minutes: 55
+  canon:
     runs-on: ubuntu-latest
+    timeout-minutes: 55
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "18.20.4"
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "18.20.4"
 
       - name: Unzip project.zip
         run: |
@@ -25,71 +26,40 @@ jobs:
           mkdir -p extracted
           unzip -q project.zip -d extracted
 
-      - name: Remove any .npmrc inside extracted
+      - name: Canon grep bans
         run: |
-          find extracted -maxdepth 12 -name ".npmrc" -print -delete || true
+          cd extracted
+          ! grep -RInE "telegram_id|tgId|\buid\b" . || (echo "ERROR: banned id found" && exit 3)
+          ! grep -RInE "rating|reiting|raiting" . || (echo "ERROR: banned rating found" && exit 3)
 
-      - name: Pick project root (tests/)
-        id: pick_root
+      - name: Backend deps + pytest
         run: |
-          ROOT_DIR=""
-          while IFS= read -r d; do
-            if [ -d "$d/tests" ]; then
-              ROOT_DIR="$d"
-              break
-            fi
-          done < <(find extracted -maxdepth 6 -type d -print | sort)
-          test -n "$ROOT_DIR"
-          echo "root_dir=$ROOT_DIR" >> "$GITHUB_OUTPUT"
-          echo "ROOT_DIR=$ROOT_DIR"
-
-      - name: Install backend deps + pytest stack
-        run: |
-          cd "${{ steps.pick_root.outputs.root_dir }}/backend"
+          cd extracted/backend
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          fi
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           pip install -U pytest pytest-asyncio PyJWT aiosqlite
 
-      - name: Backend compileall
-        run: |
-          cd "${{ steps.pick_root.outputs.root_dir }}/backend"
-          python -m compileall . -q
-
-      - name: Backend pytest (from root)
+      - name: Backend tests
         env:
-          PYTHONPATH: ${{ steps.pick_root.outputs.root_dir }}
+          PYTHONPATH: ${{ github.workspace }}/extracted
         run: |
-          cd "${{ steps.pick_root.outputs.root_dir }}"
+          cd extracted
+          python -m compileall backend -q
           pytest -q
 
-      - name: Force public npm registry (diagnostic only)
+      - name: Frontend lockfile must be clean
         run: |
-          npm config set registry https://registry.npmjs.org/
-          npm config delete always-auth || true
-          npm config get registry
-
-      - name: Frontend lockfile must exist
-        run: |
-          cd "${{ steps.pick_root.outputs.root_dir }}/frontend"
+          cd extracted/frontend
           test -f package-lock.json
-
-      - name: Verify lockfile is clean (no internal registry)
-        run: |
-          cd "${{ steps.pick_root.outputs.root_dir }}/frontend"
           if grep -n "applied-caas-gateway\|internal\.api\.openai\|artifactory" package-lock.json; then
             echo "ERROR: lockfile contains internal registry"
             exit 2
           fi
 
-      - name: Frontend npm ci
-        run: |
-          cd "${{ steps.pick_root.outputs.root_dir }}/frontend"
-          rm -rf node_modules
-          npm ci --no-audit --no-fund
-
       - name: Frontend build
         run: |
-          cd "${{ steps.pick_root.outputs.root_dir }}/frontend"
+          cd extracted/frontend
+          npm config set registry https://registry.npmjs.org/
+          rm -rf node_modules
+          npm ci --no-audit --no-fund
           npm run build
