@@ -55,7 +55,7 @@ jobs:
           echo "backend_dir=$BACKEND_DIR" >> "$GITHUB_OUTPUT"
           echo "BACKEND_DIR=$BACKEND_DIR"
 
-      - name: Install backend deps (pip) + pytest stack
+      - name: Install backend deps (pip) + test deps
         run: |
           cd "${{ steps.pick_backend.outputs.backend_dir }}"
           python -m pip install --upgrade pip
@@ -64,17 +64,17 @@ jobs:
           elif [ -f pyproject.toml ]; then
             pip install -e . || true
           fi
-          # Always ensure test/runtime deps exist for our suite
-          pip install -U pytest pytest-asyncio PyJWT
+          # Always ensure test/runtime deps exist for suite
+          pip install -U pytest pytest-asyncio PyJWT aiosqlite
 
       - name: Backend compileall
         run: |
           cd "${{ steps.pick_backend.outputs.backend_dir }}"
           python -m compileall . -q
 
-      - name: Backend pytest (run from project root)
+      - name: Backend pytest (run from project root, PYTHONPATH=root)
         env:
-          PYTHONPATH: ${{ steps.pick_root.outputs.root_dir }}/backend
+          PYTHONPATH: ${{ steps.pick_root.outputs.root_dir }}
         run: |
           cd "${{ steps.pick_root.outputs.root_dir }}"
           pytest -q
