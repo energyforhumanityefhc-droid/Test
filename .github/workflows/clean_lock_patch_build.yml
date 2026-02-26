@@ -63,19 +63,19 @@ jobs:
           # DepositModal: items
           perl -0777 -pi -e 's/^\s*const\s+items\s*=\s*\(r\?\.\s*items\s*\|\|\s*\[\]\)\s*as\s*SalePackage\[\]\s*;\s*$/    const rr = r as unknown as { items?: SalePackage[] };\n    const items = rr.items ?? [];/m' "$DEP"
 
-          # DepositModal: tonconnect_tx
+          # DepositModal: tonconnect_tx (matches your line)
           perl -0777 -pi -e 's/^\s*const\s+tx\s*=\s*\(r\?\.\s*tonconnect_tx\s*\|\|\s*null\)\s*as\s*TonConnectTx\s*\|\s*null\s*;\s*$/    const rr_tx = r as unknown as { tonconnect_tx?: TonConnectTx | null };\n    const tx = rr_tx.tonconnect_tx ?? null;/m' "$DEP"
 
-          # ProfileModal: wallets (match exactly your failing line)
+          # ProfileModal: wallets (matches your line)
           perl -0777 -pi -e 's/^\s*const\s+items\s*=\s*\(r\?\.\s*wallets\s*\|\|\s*\[\]\)\s*as\s*WalletItem\[\]\s*;\s*$/    const rr_wallets = r as unknown as { wallets?: WalletItem[] };\n    const items = rr_wallets.wallets ?? [];/m' "$PRO"
 
           echo "=== Verify patches applied ==="
-          echo "--- DepositModal (rr_tx/rr/items) ---"
+          echo "--- DepositModal ---"
           grep -n "const rr_tx\|const rr = r as unknown as" "$DEP" || true
-          echo "--- ProfileModal (rr_wallets) ---"
+          echo "--- ProfileModal ---"
           grep -n "const rr_wallets" "$PRO" || true
 
-          # Hard fail if old optional chaining access still exists
+          # Hard fail if old r?.field still present
           if grep -n "r\\?\\.items" "$DEP" || grep -n "r\\?\\.tonconnect_tx" "$DEP" || grep -n "r\\?\\.wallets" "$PRO"; then
             echo "PATCH FAILED: old r?.field still present"
             exit 2
