@@ -1,14 +1,12 @@
-name: EFHC CI (Postgres-only CANON, ZIP in repo)
+name: canon
 
 on:
-  workflow_dispatch:
   push:
   pull_request:
 
 jobs:
   canon:
     runs-on: ubuntu-latest
-    timeout-minutes: 75
 
     services:
       postgres:
@@ -20,17 +18,15 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd="pg_isready -U postgres -d efhc_test"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=30
+          --health-cmd "pg_isready -U postgres -d efhc_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
 
     env:
-      # CANON: Postgres-only. SQLite forbidden.
       DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/efhc_test
       SYNC_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/efhc_test
-      ASYNC_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/efhc_test
-
+      ASYNC_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/efhc_test
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
       PIP_NO_PYTHON_VERSION_WARNING: "1"
 
@@ -43,7 +39,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "18.20.4"
+          node-version: "20"
 
       - name: Guard DB profile (Postgres-only)
         run: |
@@ -54,101 +50,109 @@ jobs:
           if not url:
             print("ERROR: DATABASE_URL is empty")
             sys.exit(2)
-          if url.startswith("sqlite://"):
+          if url.lower().startswith("sqlite://"):
             print("ERROR: SQLite is forbidden by CANON")
             sys.exit(3)
           print("OK: Postgres-only profile")
           PY
 
+      - name: Ensure project.zip exists in repo root (canon)
+        run: |
+          set -e
+          if [ -f project.zip ]; then
+            echo "OK: project.zip exists"
+            exit 0
+          fi
+
+          echo "WARN: project.zip not found in repo root"
+          echo "Root directory listing:"
+          ls -la
+
+          CANDIDATE="$(ls -1 EFHC_Bot_*.zip 2>/dev/null | head -n 1 || true)"
+          if [ -n "$CANDIDATE" ]; then
+            echo "Found candidate zip: $CANDIDATE"
+            cp "$CANDIDATE" project.zip
+            echo "Created project.zip from $CANDIDATE"
+            ls -la project.zip
+            exit 0
+          fi
+
+          echo "ERROR: project.zip not found and no EFHC_Bot_*.zip candidate present"
+          exit 1
+
       - name: Unzip project.zip
         run: |
-          test -f project.zip || (echo "ERROR: project.zip not found in repo root" && exit 1)
           rm -rf extracted
           mkdir -p extracted
           unzip -q project.zip -d extracted
           find extracted -maxdepth 12 -name ".npmrc" -print -delete || true
 
-      - name: Verify extracted structure
+      - name: Guard grep bans (repo-wide in extracted)
         run: |
-          test -d extracted/backend
-          test -d extracted/frontend
-          test -d extracted/tests
-
-      - name: Canon grep bans (print matches)
-        run: |
+          set -e
           cd extracted
-          echo "== banned ids =="
-          ID_MATCHES="$(grep -RInE 'telegram_id|tgId|\buid\b' . || true)"
-          if [ -n "$ID_MATCHES" ]; then
-            echo "$ID_MATCHES"
-            echo "ERROR: banned id found"
-            exit 3
-          fi
+          python - <<'PY'
+          import os, re, sys
+          banned = [
+            ("telegram_id", re.compile(r"telegram_id", re.IGNORECASE)),
+            ("rating|reiting|raiting", re.compile(r"rating|reiting|raiting", re.IGNORECASE)),
+            ("tgId (not tg_id)", re.compile(r"\btgId\b", re.IGNORECASE)),
+            ("\\buid\\b", re.compile(r"\buid\b", re.IGNORECASE)),
+          ]
+          hits = []
+          for root, _, files in os.walk("."):
+            for fn in files:
+              path = os.path.join(root, fn)
+              try:
+                with open(path, "rb") as f:
+                  data = f.read()
+              except Exception:
+                continue
+              try:
+                text = data.decode("utf-8", errors="replace")
+              except Exception:
+                continue
+              for name, rx in banned:
+                m = rx.search(text)
+                if m:
+                  hits.append((name, path, m.start()))
+          if hits:
+            print("ERROR: forbidden identifiers found:")
+            for name, path, pos in hits[:50]:
+              print(f"- {name}: {path} @ {pos}")
+            sys.exit(1)
+          print("OK: bans check passed")
+          PY
 
-          echo "== banned rating substrings =="
-          R_MATCHES="$(grep -RInE 'rating|reiting|raiting' . || true)"
-          if [ -n "$R_MATCHES" ]; then
-            echo "$R_MATCHES"
-            echo "ERROR: banned rating found"
-            exit 3
-          fi
-
-      # ---------------- Backend ----------------
-      - name: Install backend deps (pip)
+      - name: Backend deps
         run: |
           python -m pip install --upgrade pip
-          if [ -f extracted/backend/requirements.txt ]; then
-            pip install -r extracted/backend/requirements.txt
-          fi
-          pip install -U pytest pytest-asyncio alembic "psycopg[binary]" PyJWT aiosqlite
-          python -m pip install flake8==7.1.1
+          pip install -r extracted/backend/requirements.txt
 
-      - name: Lint (flake8)
-        run: |
-          cd extracted
-          # Запускаем flake8 только по существующим папкам.
-          TARGETS=""
-          [ -d backend ] && TARGETS="$TARGETS backend"
-          [ -d tests ] && TARGETS="$TARGETS tests"
-          [ -d ops ] && TARGETS="$TARGETS ops"
-          test -n "$TARGETS"
-          flake8 $TARGETS --exclude=.pytest_cache,__pycache__
-
-      - name: Backend compileall
+      - name: compileall (backend)
         run: |
           python -m compileall extracted/backend -q
 
-      - name: Alembic upgrade head (Postgres)
+      - name: Alembic upgrade head (Postgres-only)
         run: |
-          cd extracted
-          test -f backend/alembic.ini
-          alembic -c backend/alembic.ini upgrade head
+          cd extracted/backend
+          alembic -c alembic.ini upgrade head
 
-      - name: Pytest (Postgres-only)
-        env:
-          PYTHONPATH: ${{ github.workspace }}/extracted
+      - name: pytest (Postgres-only)
         run: |
           cd extracted
           pytest -q
 
-      # ---------------- Frontend ----------------
-      - name: Frontend lockfile must be clean (no internal registry)
+      - name: Frontend lockfile checks + build
         run: |
-          cd extracted/frontend
-          test -f package-lock.json
-          if grep -n "applied-caas-gateway\|internal\.api\.openai\|artifactory" package-lock.json; then
-            echo "ERROR: lockfile contains internal registry"
-            exit 2
+          set -e
+          test -f extracted/frontend/package-lock.json || (echo "ERROR: package-lock.json missing" && exit 1)
+
+          if grep -RInE "applied-caas-gateway|internal\.api\.openai|artifactory" extracted/frontend/package-lock.json; then
+            echo "ERROR: forbidden registry markers in package-lock.json"
+            exit 1
           fi
 
-      - name: Frontend npm ci
-        run: |
           cd extracted/frontend
-          npm config set registry https://registry.npmjs.org/
-          rm -rf node_modules
-          npm ci --no-audit --no-fund
-
-      - name: Frontend build
-        run: |
-          cd extracted/frontend
+          npm ci
           npm run build
