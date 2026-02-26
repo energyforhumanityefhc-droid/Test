@@ -1,0 +1,79 @@
+name: CLEAN LOCKFILE + PATCH DepositModal + BUILD
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "18.20.4"
+
+      - name: Unzip project.zip
+        run: |
+          rm -rf extracted
+          mkdir -p extracted
+          unzip -q project.zip -d extracted
+
+      - name: Remove any .npmrc inside extracted
+        run: |
+          find extracted -maxdepth 12 -name ".npmrc" -print -delete || true
+
+      - name: Pick real frontend dir
+        id: pick_frontend
+        run: |
+          FRONTEND_DIR=""
+          while IFS= read -r d; do
+            if [ -f "$d/package.json" ] && node -e "const p=require('./$d/package.json'); process.exit(p.scripts && p.scripts.build ? 0 : 1)"; then
+              FRONTEND_DIR="$d"
+              break
+            fi
+          done < <(find extracted -maxdepth 12 -type d -name frontend | sort)
+          test -n "$FRONTEND_DIR"
+          echo "frontend_dir=$FRONTEND_DIR" >> "$GITHUB_OUTPUT"
+          echo "FRONTEND_DIR=$FRONTEND_DIR"
+
+      - name: Force public npm registry (hard)
+        run: |
+          npm config set registry https://registry.npmjs.org/
+          npm config delete always-auth || true
+          npm config get registry
+
+      - name: Clean poisoned lockfile + reinstall
+        run: |
+          cd "${{ steps.pick_frontend.outputs.frontend_dir }}"
+          rm -f package-lock.json
+          rm -rf node_modules
+          npm install --no-audit --no-fund
+
+      - name: Patch DepositModal.tsx (items typing)
+        run: |
+          FILE="${{ steps.pick_frontend.outputs.frontend_dir }}/src/components/DepositModal.tsx"
+          test -f "$FILE"
+          python -c "from pathlib import Path; p=Path('$FILE'); s=p.read_text(encoding='utf-8'); \
+old='const items = (r?.items || []) as SalePackage[];'; \
+new='const rr = r as unknown as { items?: SalePackage[] };\\n    const items = rr.items ?? [];'; \
+p.write_text(s.replace(old,new,1), encoding='utf-8') if old in s else (_ for _ in ()).throw(SystemExit('Expected line not found')); \
+print('Patched', p)"
+
+      - name: Build
+        run: |
+          cd "${{ steps.pick_frontend.outputs.frontend_dir }}"
+          npm run build
+
+      - name: Upload clean lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: clean_package_lock
+          path: ${{ steps.pick_frontend.outputs.frontend_dir }}/package-lock.json
+
+      - name: Upload patched DepositModal.tsx
+        uses: actions/upload-artifact@v4
+        with:
+          name: patched_DepositModal_tsx
+          path: ${{ steps.pick_frontend.outputs.frontend_dir }}/src/components/DepositModal.tsx
