@@ -1,4 +1,4 @@
-name: FRONTEND BUILD ONLY (stable install + build)
+name: FRONTEND BUILD ONLY (stable npm)
 
 on:
   workflow_dispatch:
@@ -36,7 +36,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "18.20.4"
           cache: "npm"
           cache-dependency-path: ${{ steps.pick_frontend.outputs.frontend_dir }}/package-lock.json
 
@@ -45,22 +45,33 @@ jobs:
           npm config set registry https://registry.npmjs.org/
           npm config delete always-auth || true
           npm config get registry
+
+      - name: Pin npm to stable (workaround Exit handler never called)
+        run: |
           node -v
           npm -v
+          npm i -g npm@9.9.4
+          npm -v
 
-      - name: Install deps (npm ci, fallback to npm install if npm glitches)
+      - name: Install deps (npm ci with retry)
         run: |
           set -euo pipefail
           cd "${{ steps.pick_frontend.outputs.frontend_dir }}"
 
-          echo "== package.json build script =="
+          echo "== build script =="
           node -e "const p=require('./package.json'); console.log(p.scripts && p.scripts.build ? p.scripts.build : 'NO build script');"
 
-          echo "== try npm ci =="
-          npm ci --no-audit --no-fund || (echo "npm ci failed, fallback to npm install" && rm -rf node_modules && npm install --no-audit --no-fund)
+          echo "== npm ci attempt 1 =="
+          npm ci --no-audit --no-fund || (
+            echo "npm ci failed, cleaning cache and retrying..." &&
+            npm cache clean --force &&
+            rm -rf node_modules &&
+            echo "== npm ci attempt 2 ==" &&
+            npm ci --no-audit --no-fund
+          )
 
           echo "== verify next exists =="
-          test -f node_modules/.bin/next || (echo "ERROR: next binary not found after install" && ls -la node_modules/.bin || true && exit 2)
+          test -f node_modules/.bin/next || (echo "ERROR: next binary not found" && ls -la node_modules/.bin || true && exit 2)
 
       - name: Build
         run: |
